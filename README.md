@@ -31,7 +31,7 @@ Time to First Token (TTFT):
 
 ![vLLM Grafana Dashboard](vllm-dashboard.png)
 
-Grafana dashboard image from vllm run, showing spikes in TTFT resulting in higher values for p95 and p99.
+Grafana dashboard image from vllm run, showing spikes in TTFT resulting in higher values for p95 and p99.  This dashboard also shows only 66% cache hits meaning a third of requests require more compute for prefill.
 
 ### llm-d
 
@@ -47,7 +47,7 @@ Time to First Token (TTFT):
 
 ![llm-d Grafana Dashboard](llm-d-dashboard.png)
 
-Grafana dashboard image from llm-d run, showing smoother results for TTFT, resulting in lower values for p95 and p99.
+Grafana dashboard image from llm-d run, showing smoother results for TTFT, resulting in lower values for p95 and p99.  This dashboard shows 90% cache hits meaning only 10% of requests require using compute for prefill.
 
 ### Analysis
 
