@@ -1,6 +1,8 @@
 # Multi-Turn Conversation Benchmark Tool
 
-A Python-based benchmarking tool for testing LLM inference performance with realistic multi-turn conversations. Designed to evaluate prefix caching efficiency and KV cache behavior in LLM deployments like vLLM and llm-d.
+A Python-based benchmarking tool for testing LLM inference performance with realistic multi-turn conversations. Designed to evaluate prefix caching efficiency and KV cache behavior in LLM deployments with llm-d.
+
+**[Running on OpenShift?](#running-on-openshift)** - Use the pre-built container image.
 
 ## Features
 
@@ -10,6 +12,59 @@ A Python-based benchmarking tool for testing LLM inference performance with real
 - **Parallel Execution**: Multiple concurrent workers with random delays to simulate real user behavior
 - **Prefix Caching Analysis**: Measures TTFT (Time to First Token) to evaluate cache hit rates
 - **Comprehensive Statistics**: Per-turn analysis, document type breakdown, and speedup ratios
+
+## Example Results
+
+The following results were collected on an OpenShift cluster with 4 x NVIDIA L4 GPUs, running 11 concurrent conversations with 10 turns each.
+
+### vLLM
+
+```
+Time to First Token (TTFT):
+  Min:         50.13 ms
+  Max:        850.20 ms
+  Mean:       211.82 ms
+  P50:        123.22 ms
+  P95:        744.71 ms
+  P99:        840.95 ms
+```
+
+![vLLM Grafana Dashboard](vllm-dashboard.png)
+
+Grafana dashboard image from vllm run, showing spikes in TTFT resulting in higher values for p95 and p99.
+
+### llm-d
+
+```
+Time to First Token (TTFT):
+  Min:         51.19 ms
+  Max:        804.54 ms
+  Mean:       120.98 ms
+  P50:         92.09 ms
+  P95:        271.60 ms
+  P99:        674.21 ms
+```
+
+![llm-d Grafana Dashboard](llm-d-dashboard.png)
+
+Grafana dashboard image from llm-d run, showing smoother results for TTFT, resulting in lower values for p95 and p99.
+
+### Analysis
+
+llm-d demonstrates significantly better and more consistent performance compared to vLLM, particularly in the higher percentiles:
+
+| Metric | vLLM | llm-d | Improvement |
+|--------|------|-------|-------------|
+| Mean | 211.82 ms | 120.98 ms | **43% faster** |
+| P50 | 123.22 ms | 92.09 ms | **25% faster** |
+| P95 | 744.71 ms | 271.60 ms | **64% faster** |
+| P99 | 840.95 ms | 674.21 ms | **20% faster** |
+
+The most dramatic improvement is at P95, where llm-d is nearly 3x faster than vLLM. This indicates that llm-d's prefix-aware routing effectively directs requests to replicas that already have relevant KV cache entries, avoiding the expensive cold-start prefill operations that cause tail latency spikes in vLLM.
+
+
+The tighter distribution of latencies in llm-d (P95 only 2.9x the P50, vs 6x for vLLM) demonstrates more predictable performance, which is critical for production workloads with SLA requirements.
+
 
 ## Requirements
 
@@ -245,3 +300,4 @@ Usually indicates context length exceeded. Solutions:
 - Reduce `--parallel` if overwhelming the service
 - Increase `--min-delay` and `--max-delay` for more realistic pacing
 - Check GPU utilization on model pods
+
