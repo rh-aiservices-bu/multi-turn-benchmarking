@@ -1,0 +1,27 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: multi-turn-benchmark
+  labels:
+    app: multi-turn-benchmark
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: multi-turn-benchmark
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: benchmark
+          image: quay.io/hayesphilip/multi-turn-benchmark:0.0.1
+          args:
+            - "http://qwen-vllm-lb.demo-llm.svc.cluster.local:8000/v1"
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "512Mi"
