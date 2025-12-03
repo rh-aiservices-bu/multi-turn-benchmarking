@@ -17,6 +17,8 @@ A Python-based benchmarking tool for testing LLM inference performance with real
 
 The following results were collected on an OpenShift cluster with 4 x NVIDIA L4 GPUs, running 11 concurrent conversations with 10 turns each.
 
+**These results are in no way indicative of the performance of vLLM or llm-d, they simply demonstrate a scenario with large document processing on entry level GPUs.**
+
 ### vLLM
 
 ```
