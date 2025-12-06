@@ -172,7 +172,7 @@ class MultiturnBenchmark:
         self.max_delay = max_delay
         self.model_name: Optional[str] = None
         self.conversations: list[Conversation] = []
-        self.client: Optional[httpx.AsyncClient] = None
+        self.clients: list[httpx.AsyncClient] = []
         self.seed_documents: list[SeedDocument] = []
 
     def load_seed_documents(self):
@@ -216,6 +216,7 @@ class MultiturnBenchmark:
 
     async def send_chat_request(self, conversation: Conversation) -> tuple[str, ConversationStats]:
         """Send a chat completion request and collect stats."""
+        client = self.clients[conversation.id]
         start_time = time.perf_counter()
         first_token_time: Optional[float] = None
         full_response = ""
@@ -230,7 +231,7 @@ class MultiturnBenchmark:
         stats = ConversationStats(turn=conversation.current_turn)
 
         try:
-            async with self.client.stream(
+            async with client.stream(
                 "POST",
                 f"{self.base_url}/chat/completions",
                 json=payload,
@@ -373,7 +374,7 @@ class MultiturnBenchmark:
             first_token_time = None
 
             try:
-                async with self.client.stream(
+                async with self.clients[i % len(self.clients)].stream(
                     "POST",
                     f"{self.base_url}/chat/completions",
                     json=payload,
@@ -502,18 +503,16 @@ class MultiturnBenchmark:
         # Get model name
         self.model_name = await self.get_model_name()
 
-        # Initialize conversations (one per document, cycling if needed)
+        # Initialize conversations, and their clients, (one per document, cycling if needed)
         self.conversations = []
+        self.clients = []
+        limits = httpx.Limits(max_keepalive_connections=0, max_connections=100)
         for i in range(self.num_conversations):
             doc = self.seed_documents[i % len(self.seed_documents)]
             self.conversations.append(Conversation(id=i, document=doc))
+            self.clients.append(httpx.AsyncClient(verify=False, timeout=self.timeout, limits=limits))
 
         print(f"\nInitialized {len(self.conversations)} conversations")
-
-        # Create HTTP client with connection pooling disabled for proper load balancing
-        # This ensures each request can be routed to a different backend pod
-        limits = httpx.Limits(max_keepalive_connections=0, max_connections=100)
-        self.client = httpx.AsyncClient(verify=False, timeout=self.timeout, limits=limits)
 
         try:
             # Run warm-up phase first
@@ -532,7 +531,8 @@ class MultiturnBenchmark:
             self._print_summary(total_time)
 
         finally:
-            await self.client.aclose()
+            for client in self.clients:
+                await client.aclose()
 
     def _print_summary(self, total_time: float):
         """Print benchmark summary statistics."""
