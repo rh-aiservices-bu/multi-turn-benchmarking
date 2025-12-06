@@ -11,6 +11,7 @@ are used for each type to simulate realistic LLM use cases.
 
 import argparse
 import asyncio
+import json
 import time
 import random
 import os
@@ -244,7 +245,6 @@ class MultiturnBenchmark:
                             break
 
                         try:
-                            import json
 
                             data = json.loads(data_str)
 
@@ -386,8 +386,6 @@ class MultiturnBenchmark:
                             if data_str.strip() == "[DONE]":
                                 break
                             try:
-                                import json
-
                                 data = json.loads(data_str)
                                 if "choices" in data and len(data["choices"]) > 0:
                                     delta = data["choices"][0].get("delta", {})
