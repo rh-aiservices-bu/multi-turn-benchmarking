@@ -11,6 +11,7 @@ are used for each type to simulate realistic LLM use cases.
 
 import argparse
 import asyncio
+import json
 import time
 import random
 import os
@@ -21,22 +22,23 @@ import httpx
 
 
 # Document type classification based on file extension
-CODE_EXTENSIONS = {'.py', '.go', '.rs', '.tsx', '.ts', '.js', '.sql', '.java', '.c', '.cpp', '.rb'}
-TEXT_EXTENSIONS = {'.md', '.txt', '.rst', '.html'}
+CODE_EXTENSIONS = {".py", ".go", ".rs", ".tsx", ".ts", ".js", ".sql", ".java", ".c", ".cpp", ".rb"}
+TEXT_EXTENSIONS = {".md", ".txt", ".rst", ".html"}
 
 
 @dataclass
 class SeedDocument:
     """Represents a seed document for conversation starters."""
+
     path: Path
     content: str
     is_code: bool
     name: str
 
     @classmethod
-    def load(cls, path: Path) -> 'SeedDocument':
+    def load(cls, path: Path) -> "SeedDocument":
         """Load a seed document from disk."""
-        content = path.read_text(encoding='utf-8')
+        content = path.read_text(encoding="utf-8")
         ext = path.suffix.lower()
         is_code = ext in CODE_EXTENSIONS
         return cls(path=path, content=content, is_code=is_code, name=path.name)
@@ -45,6 +47,7 @@ class SeedDocument:
 @dataclass
 class ConversationStats:
     """Statistics for a single request."""
+
     turn: int
     ttft_ms: Optional[float] = None  # Time to first token
     total_time_ms: Optional[float] = None
@@ -56,6 +59,7 @@ class ConversationStats:
 @dataclass
 class Conversation:
     """Represents a multi-turn conversation."""
+
     id: int
     document: SeedDocument
     messages: list = field(default_factory=list)
@@ -168,7 +172,7 @@ class MultiturnBenchmark:
         self.max_delay = max_delay
         self.model_name: Optional[str] = None
         self.conversations: list[Conversation] = []
-        self.client: Optional[httpx.AsyncClient] = None
+        self.clients: list[httpx.AsyncClient] = []
         self.seed_documents: list[SeedDocument] = []
 
     def load_seed_documents(self):
@@ -210,11 +214,9 @@ class MultiturnBenchmark:
             else:
                 raise ValueError("No models available at the endpoint")
 
-    async def send_chat_request(
-        self,
-        conversation: Conversation
-    ) -> tuple[str, ConversationStats]:
+    async def send_chat_request(self, conversation: Conversation) -> tuple[str, ConversationStats]:
         """Send a chat completion request and collect stats."""
+        client = self.clients[conversation.id]
         start_time = time.perf_counter()
         first_token_time: Optional[float] = None
         full_response = ""
@@ -229,7 +231,7 @@ class MultiturnBenchmark:
         stats = ConversationStats(turn=conversation.current_turn)
 
         try:
-            async with self.client.stream(
+            async with client.stream(
                 "POST",
                 f"{self.base_url}/chat/completions",
                 json=payload,
@@ -244,7 +246,7 @@ class MultiturnBenchmark:
                             break
 
                         try:
-                            import json
+
                             data = json.loads(data_str)
 
                             # Extract content
@@ -317,7 +319,7 @@ class MultiturnBenchmark:
         )
 
         if self.verbose and response_text:
-            print(f"      Response: \"{response_text[:100]}...\"")
+            print(f'      Response: "{response_text[:100]}..."')
 
         conversation.current_turn += 1
 
@@ -372,7 +374,7 @@ class MultiturnBenchmark:
             first_token_time = None
 
             try:
-                async with self.client.stream(
+                async with self.clients[i % len(self.clients)].stream(
                     "POST",
                     f"{self.base_url}/chat/completions",
                     json=payload,
@@ -385,7 +387,6 @@ class MultiturnBenchmark:
                             if data_str.strip() == "[DONE]":
                                 break
                             try:
-                                import json
                                 data = json.loads(data_str)
                                 if "choices" in data and len(data["choices"]) > 0:
                                     delta = data["choices"][0].get("delta", {})
@@ -401,7 +402,9 @@ class MultiturnBenchmark:
                 warmup_stats.append((ttft_ms, total_ms))
 
                 ttft_str = f"{ttft_ms:.1f}ms" if ttft_ms else "N/A"
-                print(f"  Warm-up {i+1:2d}/{num_requests}: TTFT={ttft_str:>8} | Total={total_ms:.1f}ms | \"{prompt[:40]}...\"")
+                print(
+                    f'  Warm-up {i+1:2d}/{num_requests}: TTFT={ttft_str:>8} | Total={total_ms:.1f}ms | "{prompt[:40]}..."'
+                )
 
             except Exception as e:
                 print(f"  Warm-up {i+1:2d}/{num_requests}: Error - {e}")
@@ -500,18 +503,16 @@ class MultiturnBenchmark:
         # Get model name
         self.model_name = await self.get_model_name()
 
-        # Initialize conversations (one per document, cycling if needed)
+        # Initialize conversations, and their clients, (one per document, cycling if needed)
         self.conversations = []
+        self.clients = []
+        limits = httpx.Limits(max_keepalive_connections=0, max_connections=100)
         for i in range(self.num_conversations):
             doc = self.seed_documents[i % len(self.seed_documents)]
             self.conversations.append(Conversation(id=i, document=doc))
+            self.clients.append(httpx.AsyncClient(verify=False, timeout=self.timeout, limits=limits))
 
         print(f"\nInitialized {len(self.conversations)} conversations")
-
-        # Create HTTP client with connection pooling disabled for proper load balancing
-        # This ensures each request can be routed to a different backend pod
-        limits = httpx.Limits(max_keepalive_connections=0, max_connections=100)
-        self.client = httpx.AsyncClient(verify=False, timeout=self.timeout, limits=limits)
 
         try:
             # Run warm-up phase first
@@ -530,7 +531,8 @@ class MultiturnBenchmark:
             self._print_summary(total_time)
 
         finally:
-            await self.client.aclose()
+            for client in self.clients:
+                await client.aclose()
 
     def _print_summary(self, total_time: float):
         """Print benchmark summary statistics."""
@@ -585,10 +587,7 @@ class MultiturnBenchmark:
         # Per-turn analysis
         print(f"\nTTFT by Turn Number:")
         for turn in range(self.turns_per_conversation):
-            turn_ttfts = [
-                s.ttft_ms for s in all_stats
-                if s.turn == turn and s.ttft_ms is not None
-            ]
+            turn_ttfts = [s.ttft_ms for s in all_stats if s.turn == turn and s.ttft_ms is not None]
             if turn_ttfts:
                 avg_ttft = sum(turn_ttfts) / len(turn_ttfts)
                 print(f"  Turn {turn + 1:2d}: {avg_ttft:>10.2f} ms avg ({len(turn_ttfts)} requests)")
@@ -620,7 +619,7 @@ class MultiturnBenchmark:
         if later_turn_ttfts:
             print(f"  Later turns avg: {sum(later_turn_ttfts)/len(later_turn_ttfts):>10.2f} ms")
         if first_turn_ttfts and later_turn_ttfts:
-            speedup = (sum(first_turn_ttfts)/len(first_turn_ttfts)) / (sum(later_turn_ttfts)/len(later_turn_ttfts))
+            speedup = (sum(first_turn_ttfts) / len(first_turn_ttfts)) / (sum(later_turn_ttfts) / len(later_turn_ttfts))
             print(f"  Speedup ratio:   {speedup:>10.2f}x")
 
         print("\n" + "=" * 80)
@@ -636,66 +635,35 @@ Examples:
   %(prog)s https://my-llm-service.example.com/v1 --conversations 20 --turns 5
   %(prog)s $LLM_URL --parallel 8 --min-delay 0.1 --max-delay 1.0
   %(prog)s $LLM_URL --seed-documents ./my-documents
-        """
+        """,
     )
 
+    parser.add_argument("url", help="Base URL of the LLM API (e.g., http://localhost:8000/v1)")
     parser.add_argument(
-        "url",
-        help="Base URL of the LLM API (e.g., http://localhost:8000/v1)"
-    )
-    parser.add_argument(
-        "-d", "--seed-documents",
+        "-d",
+        "--seed-documents",
         type=str,
         default=os.path.join(os.path.dirname(__file__), "seed-documents"),
-        help="Directory containing seed documents (default: ./seed-documents)"
+        help="Directory containing seed documents (default: ./seed-documents)",
     )
     parser.add_argument(
-        "-c", "--conversations",
+        "-c",
+        "--conversations",
         type=int,
         default=11,
-        help="Number of concurrent conversations (default: 11, one per document)"
+        help="Number of concurrent conversations (default: 11, one per document)",
+    )
+    parser.add_argument("-t", "--turns", type=int, default=10, help="Number of turns per conversation (default: 10)")
+    parser.add_argument("-m", "--max-tokens", type=int, default=500, help="Maximum tokens per response (default: 500)")
+    parser.add_argument("-p", "--parallel", type=int, default=4, help="Number of parallel workers (default: 4)")
+    parser.add_argument(
+        "--min-delay", type=float, default=0.5, help="Minimum delay between requests in seconds (default: 0.5)"
     )
     parser.add_argument(
-        "-t", "--turns",
-        type=int,
-        default=10,
-        help="Number of turns per conversation (default: 10)"
+        "--max-delay", type=float, default=2.0, help="Maximum delay between requests in seconds (default: 2.0)"
     )
-    parser.add_argument(
-        "-m", "--max-tokens",
-        type=int,
-        default=500,
-        help="Maximum tokens per response (default: 500)"
-    )
-    parser.add_argument(
-        "-p", "--parallel",
-        type=int,
-        default=4,
-        help="Number of parallel workers (default: 4)"
-    )
-    parser.add_argument(
-        "--min-delay",
-        type=float,
-        default=0.5,
-        help="Minimum delay between requests in seconds (default: 0.5)"
-    )
-    parser.add_argument(
-        "--max-delay",
-        type=float,
-        default=2.0,
-        help="Maximum delay between requests in seconds (default: 2.0)"
-    )
-    parser.add_argument(
-        "--timeout",
-        type=float,
-        default=120.0,
-        help="Request timeout in seconds (default: 120)"
-    )
-    parser.add_argument(
-        "-v", "--verbose",
-        action="store_true",
-        help="Show response previews"
-    )
+    parser.add_argument("--timeout", type=float, default=120.0, help="Request timeout in seconds (default: 120)")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Show response previews")
 
     args = parser.parse_args()
 
